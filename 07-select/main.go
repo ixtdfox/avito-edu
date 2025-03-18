@@ -2,95 +2,104 @@ package main
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
+// Пример 1: Проблемы с гонками данных (data race) и их решение с помощью каналов
+func exampleDataRace() {
+	var counter int
+	var wg sync.WaitGroup
+	ch := make(chan int, 1) // Буферизованный канал для синхронизации
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ch <- 1 // Блокируем доступ к counter
+			counter++
+			<-ch // Освобождаем доступ к counter
+		}()
+	}
+
+	wg.Wait()
+	fmt.Println("Counter:", counter)
+}
+
+// Пример 2: Проблемы с паниками при обращении к закрытым каналам
+func exampleClosedChannelPanic() {
+	ch := make(chan int)
+
+	go func() {
+		ch <- 1
+		close(ch)
+	}()
+
+	// Первое чтение из канала
+	fmt.Println(<-ch)
+
+	// Второе чтение из закрытого канала (не вызовет панику, вернет нулевое значение)
+	fmt.Println(<-ch)
+
+	// Попытка записи в закрытый канал вызовет панику
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Println("Recovered from panic:", r)
+			}
+		}()
+		ch <- 2 // Паника: попытка записи в закрытый канал
+	}()
+
+	time.Sleep(time.Second) // Даем время для завершения горутины
+}
+
+// Пример 3: Как горутины могут вызывать паники в основном потоке, если их не обрабатывать правильно
+func exampleGoroutinePanic() {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Println("Recovered in goroutine:", r)
+			}
+		}()
+		panic("goroutine panic")
+	}()
+
+	time.Sleep(time.Second) // Даем время для завершения горутины
+	fmt.Println("Main goroutine continues")
+}
+
+// Пример 4: Лучшие практики синхронизации горутин через sync.WaitGroup, каналы и другие механизмы
+func exampleSyncBestPractices() {
+	var wg sync.WaitGroup
+	ch := make(chan int, 5) // Буферизованный канал для ограничения количества одновременно работающих горутин
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ch <- i                 // Блокируем, если канал заполнен
+			defer func() { <-ch }() // Освобождаем слот в канале после завершения работы
+
+			fmt.Println("Processing task", i)
+			time.Sleep(time.Second) // Имитация работы
+		}(i)
+	}
+
+	wg.Wait()
+	fmt.Println("All tasks processed")
+}
+
 func main() {
-	// Пример 1: Объяснение конструкции select
-	exampleSelect()
+	fmt.Println("Example 1: Data Race and Solution with Channels")
+	exampleDataRace()
 
-	// Пример 2: Тайм-ауты с использованием time.After и select
-	exampleTimeout()
+	fmt.Println("\nExample 2: Panic with Closed Channels")
+	exampleClosedChannelPanic()
 
-	// Пример 3: Использование select с несколькими каналами и тайм-аутами
-	exampleMultipleChannelsWithTimeout()
-}
+	fmt.Println("\nExample 3: Goroutine Panic in Main Thread")
+	exampleGoroutinePanic()
 
-// Пример 1: Объяснение конструкции select
-func exampleSelect() {
-	fmt.Println("--- Пример 1: Использование select ---")
-
-	ch1 := make(chan string)
-	ch2 := make(chan string)
-
-	go func() {
-		time.Sleep(1 * time.Second)
-		ch1 <- "Сообщение из канала 1"
-	}()
-
-	go func() {
-		time.Sleep(2 * time.Second)
-		ch2 <- "Сообщение из канала 2"
-	}()
-
-	// select ожидает данные из любого канала
-	select {
-	case msg1 := <-ch1:
-		fmt.Println(msg1)
-	case msg2 := <-ch2:
-		fmt.Println(msg2)
-	}
-
-	// В этом примере select выберет первый канал, который получит данные (в данном случае ch1)
-}
-
-// Пример 2: Тайм-ауты с использованием time.After и select
-func exampleTimeout() {
-	fmt.Println("\n--- Пример 2: Тайм-ауты с time.After ---")
-
-	ch := make(chan string)
-
-	go func() {
-		time.Sleep(3 * time.Second)
-		ch <- "Данные получены"
-	}()
-
-	select {
-	case msg := <-ch:
-		fmt.Println(msg)
-	case <-time.After(2 * time.Second):
-		fmt.Println("Тайм-аут: данные не получены вовремя")
-	}
-
-	// В этом примере тайм-аут сработает раньше, чем данные придут в канал
-}
-
-// Пример 3: Использование select с несколькими каналами и тайм-аутами
-func exampleMultipleChannelsWithTimeout() {
-	fmt.Println("\n--- Пример 3: Несколько каналов и тайм-ауты ---")
-
-	ch1 := make(chan string)
-	ch2 := make(chan string)
-
-	go func() {
-		time.Sleep(1 * time.Second)
-		ch1 <- "Данные из канала 1"
-	}()
-
-	go func() {
-		time.Sleep(3 * time.Second)
-		ch2 <- "Данные из канала 2"
-	}()
-
-	select {
-	case msg1 := <-ch1:
-		fmt.Println(msg1)
-	case msg2 := <-ch2:
-		fmt.Println(msg2)
-	case <-time.After(2 * time.Second):
-		fmt.Println("Тайм-аут: ни один из каналов не ответил вовремя")
-	}
-
-	// В этом примере select выберет данные из ch1, так как он ответит первым.
-	// Если бы ch1 ответил позже 2 секунд, сработал бы тайм-аут.
+	fmt.Println("\nExample 4: Best Practices for Goroutine Synchronization")
+	exampleSyncBestPractices()
 }
